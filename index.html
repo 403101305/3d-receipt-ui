@@ -3,264 +3,459 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3D 电子小票</title>
+<title>高质感3D电子小票</title>
 
 <style>
+*{
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 body{
-  margin:0;
-  overflow:hidden;
-  background: linear-gradient(135deg, #f7f8fa 0%, #eef2f5 100%);
-  font-family: system-ui, monospace;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  font-family: system-ui, -apple-system, monospace;
 }
 #title{
-  position:fixed;
-  top:20px;
-  left:20px;
-  color:#666;
-  font-size:14px;
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  color: #495057;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 10;
 }
 canvas{
-  display:block;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 </style>
 </head>
 
 <body>
-<div id="title">3D 电子小票 · 点击拖拽轻轻晃动</div>
+<div id="title">3D 电子小票 · 点击拖拽轻微晃动</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
+// 核心配置（可按需微调）
+const CONFIG = {
+  // 小票尺寸
+  width: 1.2,
+  height: 2.4,
+  thickness: 0.02, // 纸张厚度，决定厚实感
+  // 分段数（控制弯曲精度）
+  segX: 16,
+  segY: 48,
+  // 物理参数
+  stiffness: 0.95, // 纸张挺括度（越高越硬）
+  damping: 0.92, // 阻尼（越高晃动停的越快）
+  restoreForce: 0.08, // 垂直恢复力（保证不翻转）
+  maxBend: 0.12, // 最大弯曲幅度（防止过度变形）
+  dragSensitivity: 0.05, // 拖拽灵敏度
+};
 
-let scene, camera, renderer;
-let receipt, geometry;
-
-const SEGX = 12;
-const SEGY = 40;
-
+// 全局变量
+let scene, camera, renderer, receipt;
 let particles = [];
 let constraints = [];
+let isDragging = false;
+let dragTarget = null;
 
 init();
 animate();
 
+// 初始化场景
 function init() {
+  // 场景与相机
   scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 3.5);
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
-  camera.position.set(0, 0, 3.2);
-
-  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  // 渲染器
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0xeef2f5, 1);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0xe9ecef, 1);
   document.body.appendChild(renderer.domElement);
 
-  // 更柔和的光照，纸张更有质感
-  const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-  scene.add(ambient);
+  // 光影系统（核心：打造厚实纸张的光影层次）
+  // 环境光
+  const ambientLight = new THREE.HemisphereLight(0xffffff, 0x8d99ae, 0.85);
+  scene.add(ambientLight);
+  // 主光源
+  const mainLight = new THREE.DirectionalLight(0xffffff, 1.1);
+  mainLight.position.set(3, 5, 4);
+  mainLight.castShadow = true;
+  scene.add(mainLight);
+  // 补光（消除死黑，突出厚度）
+  const fillLight1 = new THREE.DirectionalLight(0xffffff, 0.4);
+  fillLight1.position.set(-3, 2, 2);
+  scene.add(fillLight1);
+  const fillLight2 = new THREE.DirectionalLight(0xffffff, 0.25);
+  fillLight2.position.set(0, -2, 1);
+  scene.add(fillLight2);
 
-  const light = new THREE.DirectionalLight(0xffffff, 1);
-  light.position.set(2, 4, 3);
-  scene.add(light);
+  // 生成小票纹理（真实中文热敏小票）
+  const receiptCanvas = createReceiptTexture();
+  const receiptTexture = new THREE.CanvasTexture(receiptCanvas);
+  receiptTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-  // 小票画布
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 1024;
-  const ctx = canvas.getContext("2d");
-
-  // 纸张底色偏暖，更像真实小票
-  ctx.fillStyle = "#fffaf0";
-  ctx.fillRect(0, 0, 512, 1024);
-
-  ctx.fillStyle = "#222";
-  ctx.font = "28px monospace";
-
-  // 中文真实小票
-  const lines = [
-    "  便利超市",
-    "  --------------------",
-    "  2026年04月03日 16:30",
-    "",
-    "  矿泉水 ×2        4.00",
-    "  面包 ×1          5.50",
-    "  火腿肠 ×3        9.00",
-    "  纸巾 ×1          3.50",
-    "  咖啡 ×1         12.00",
-    "",
-    "  --------------------",
-    "  合计:          34.00",
-    "  实收:          34.00",
-    "",
-    "  欢迎再次光临！"
+  // 多材质系统（核心：打造真实厚度）
+  // 正面：小票内容材质
+  const frontMaterial = new THREE.MeshPhysicalMaterial({
+    map: receiptTexture,
+    side: THREE.FrontSide,
+    roughness: 0.75,
+    metalness: 0,
+    clearcoat: 0.15,
+    clearcoatRoughness: 0.8,
+    thickness: CONFIG.thickness,
+    ior: 1.5,
+    transparent: false,
+  });
+  // 背面+侧面：纸张底色材质
+  const paperMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xfff8ed,
+    side: THREE.DoubleSide,
+    roughness: 0.8,
+    metalness: 0,
+    clearcoat: 0.1,
+  });
+  // 6面材质分配（BoxGeometry对应6个面）
+  const materials = [
+    paperMaterial, // 右
+    paperMaterial, // 左
+    paperMaterial, // 上
+    paperMaterial, // 下
+    frontMaterial, // 前（正面）
+    paperMaterial, // 后
   ];
 
-  lines.forEach((txt, i) => {
-    ctx.fillText(txt, 40, 80 + i * 46);
-  });
-
-  const texture = new THREE.CanvasTexture(canvas);
-
-  geometry = new THREE.PlaneGeometry(1.1, 2.2, SEGX, SEGY);
-
-  // 纸张材质更厚实
-  const material = new THREE.MeshStandardMaterial({
-    map: texture,
-    side: THREE.DoubleSide,
-    roughness: 0.9,
-    metalness: 0
-  });
-
-  receipt = new THREE.Mesh(geometry, material);
+  // 带厚度的几何体（核心：告别薄纸片）
+  const geometry = new THREE.BoxGeometry(
+    CONFIG.width,
+    CONFIG.height,
+    CONFIG.thickness,
+    CONFIG.segX,
+    CONFIG.segY,
+    1
+  );
+  receipt = new THREE.Mesh(geometry, materials);
+  receipt.castShadow = true;
+  receipt.receiveShadow = true;
   scene.add(receipt);
 
+  // 初始化物理系统
   initParticles();
   initConstraints();
+  // 初始化交互
   initInteraction();
-  window.addEventListener("resize", resize);
+  // 窗口适配
+  window.addEventListener("resize", onWindowResize);
 }
 
-function idx(x, y) {
-  return x + (SEGX + 1) * y;
+// 生成真实小票纹理
+function createReceiptTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 600;
+  canvas.height = 1200;
+  const ctx = canvas.getContext("2d");
+
+  // 纸张底色
+  ctx.fillStyle = "#fff8ed";
+  ctx.fillRect(0, 0, 600, 1200);
+
+  // 文字样式
+  ctx.fillStyle = "#1a1a1a";
+  ctx.font = "bold 32px monospace";
+  ctx.textAlign = "left";
+
+  // 小票内容（真实超市小票格式）
+  const receiptLines = [
+    { text: "社区生活超市", y: 100, bold: true },
+    { text: "--------------------------------", y: 140 },
+    { text: "单号: 2026040300187", y: 180 },
+    { text: "时间: 2026-04-03 17:45", y: 220 },
+    { text: "收银员: 003", y: 260 },
+    { text: "--------------------------------", y: 300 },
+    { text: "商品", y: 340, align: "left" },
+    { text: "数量  单价  金额", y: 340, align: "right" },
+    { text: "--------------------------------", y: 370 },
+    { text: "矿泉水 550ml", y: 410 },
+    { text: "2    2.00   4.00", y: 410, align: "right" },
+    { text: "全麦吐司", y: 450 },
+    { text: "1    6.90   6.90", y: 450, align: "right" },
+    { text: "纯牛奶 250ml", y: 490 },
+    { text: "12  3.50  42.00", y: 490, align: "right" },
+    { text: "抽纸 6包", y: 530 },
+    { text: "1   12.90  12.90", y: 530, align: "right" },
+    { text: "--------------------------------", y: 570 },
+    { text: "商品总数: 16件", y: 610 },
+    { text: "合计金额:  65.80", y: 650 },
+    { text: "实收金额:  65.80", y: 690, bold: true },
+    { text: "支付方式: 微信支付", y: 730 },
+    { text: "--------------------------------", y: 770 },
+    { text: "欢迎再次光临！", y: 820, align: "center", bold: true },
+  ];
+
+  // 绘制文字
+  receiptLines.forEach(line => {
+    ctx.font = line.bold ? "bold 28px monospace" : "24px monospace";
+    ctx.textAlign = line.align || "left";
+    
+    let x = 40;
+    if (line.align === "right") x = 560;
+    if (line.align === "center") x = 300;
+
+    ctx.fillText(line.text, x, line.y);
+  });
+
+  return canvas;
 }
 
-// 顶部固定，保持垂直
+// 初始化质点系统（不锁死任何点位，靠物理规则保持垂直）
 function initParticles() {
-  for (let y = 0; y <= SEGY; y++) {
-    for (let x = 0; x <= SEGX; x++) {
-      const px = (x / SEGX - 0.5);
-      const py = 1 - y / SEGY * 2;
+  const positions = receipt.geometry.attributes.position.array;
+  // 只取正面顶点做物理控制，背面/侧面顶点跟随正面
+  const frontVertexIndex = [];
+  
+  for (let i = 0; i < positions.length; i += 3) {
+    const z = positions[i + 2];
+    // 筛选正面顶点（Z轴最大的面）
+    if (Math.abs(z - CONFIG.thickness / 2) < 0.001) {
+      frontVertexIndex.push(i);
+      const x = positions[i];
+      const y = positions[i + 1];
+      
       particles.push({
-        pos: new THREE.Vector3(px, py, 0),
-        prev: new THREE.Vector3(px, py, 0),
-        lock: y === 0 // 顶部锁住
+        index: i,
+        x: x,
+        y: y,
+        // 初始锚点（核心：用于恢复垂直状态）
+        anchor: new THREE.Vector3(x, y, 0),
+        // 当前位置
+        pos: new THREE.Vector3(x, y, 0),
+        // 上一帧位置（用于Verlet积分）
+        prev: new THREE.Vector3(x, y, 0),
       });
     }
   }
 }
 
-function connect(a, b) {
-  const d = particles[a].pos.distanceTo(particles[b].pos);
-  constraints.push({ a, b, d });
-}
-
+// 初始化约束系统（核心：保证纸张挺括、不翻转、自然垂直）
 function initConstraints() {
-  for (let y = 0; y <= SEGY; y++) {
-    for (let x = 0; x <= SEGX; x++) {
-      if (x < SEGX) connect(idx(x, y), idx(x + 1, y));
-      if (y < SEGY) connect(idx(x, y), idx(x, y + 1));
+  // 1. 相邻水平约束（保持宽度）
+  for (let y = 0; y <= CONFIG.segY; y++) {
+    for (let x = 0; x < CONFIG.segX; x++) {
+      const i1 = x + y * (CONFIG.segX + 1);
+      const i2 = (x + 1) + y * (CONFIG.segX + 1);
+      addConstraint(i1, i2);
+    }
+  }
+
+  // 2. 相邻垂直约束（保持高度）
+  for (let y = 0; y < CONFIG.segY; y++) {
+    for (let x = 0; x <= CONFIG.segX; x++) {
+      const i1 = x + y * (CONFIG.segX + 1);
+      const i2 = x + (y + 1) * (CONFIG.segX + 1);
+      addConstraint(i1, i2);
+    }
+  }
+
+  // 3. 对角约束（防止菱形变形，保持平面刚性，杜绝翻转）
+  for (let y = 0; y < CONFIG.segY; y++) {
+    for (let x = 0; x < CONFIG.segX; x++) {
+      const i1 = x + y * (CONFIG.segX + 1);
+      const i2 = (x + 1) + (y + 1) * (CONFIG.segX + 1);
+      addConstraint(i1, i2);
+      
+      const i3 = (x + 1) + y * (CONFIG.segX + 1);
+      const i4 = x + (y + 1) * (CONFIG.segX + 1);
+      addConstraint(i3, i4);
     }
   }
 }
 
-// 极轻微自然晃动
+// 添加约束
+function addConstraint(i1, i2) {
+  const distance = particles[i1].pos.distanceTo(particles[i2].pos);
+  constraints.push({
+    p1: particles[i1],
+    p2: particles[i2],
+    distance: distance,
+  });
+}
+
+// 物理模拟
 function simulate() {
+  // Verlet积分 计算质点运动
   particles.forEach(p => {
-    if (p.lock) return;
-    const vel = p.pos.clone().sub(p.prev);
+    // 计算速度
+    const velocity = p.pos.clone().sub(p.prev).multiplyScalar(CONFIG.damping);
+    
+    // 保存当前位置
     p.prev.copy(p.pos);
-    p.pos.add(vel);
-    // 超小幅晃动
-    p.pos.z += Math.sin(Date.now() * 0.0012 + p.pos.y * 2) * 0.0004;
+    
+    // 更新位置
+    p.pos.add(velocity);
+    
+    // 核心：垂直恢复力（让每个质点回到初始锚点，自然保持垂直，不用锁死）
+    const restoreForce = p.anchor.clone().sub(p.pos).multiplyScalar(CONFIG.restoreForce);
+    p.pos.add(restoreForce);
+    
+    // 限制最大弯曲幅度（彻底杜绝翻转）
+    p.pos.z = THREE.MathUtils.clamp(p.pos.z, -CONFIG.maxBend, CONFIG.maxBend);
   });
 
-  for (let i = 0; i < 3; i++) {
+  // 迭代约束求解（保证纸张形状）
+  const iterations = 4;
+  for (let i = 0; i < iterations; i++) {
     constraints.forEach(c => {
-      const p1 = particles[c.a];
-      const p2 = particles[c.b];
-      const diff = p2.pos.clone().sub(p1.pos);
-      const dist = diff.length();
-      const err = (dist - c.d) / dist * 0.5;
-      if (!p1.lock) p1.pos.add(diff.multiplyScalar(err));
-      if (!p2.lock) p2.pos.sub(diff.multiplyScalar(err));
+      const p1 = c.p1;
+      const p2 = c.p2;
+      
+      // 计算两点距离差
+      const delta = p2.pos.clone().sub(p1.pos);
+      const currentDistance = delta.length();
+      const diff = (currentDistance - c.distance) / currentDistance;
+      
+      // 校正位置
+      const correction = delta.multiplyScalar(diff * CONFIG.stiffness * 0.5);
+      p1.pos.add(correction);
+      p2.pos.sub(correction);
     });
   }
 }
 
-function updateMesh() {
-  const pos = geometry.attributes.position;
-  let i = 0;
-  for (let y = 0; y <= SEGY; y++) {
-    for (let x = 0; x <= SEGX; x++) {
-      const p = particles[idx(x, y)];
-      // 严格限制Z轴，绝不翻转
-      p.pos.z = THREE.MathUtils.clamp(p.pos.z, -0.08, 0.08);
-      pos.setXYZ(i, p.pos.x, p.pos.y, p.pos.z);
-      i++;
+// 更新几何体顶点
+function updateGeometry() {
+  const positions = receipt.geometry.attributes.position.array;
+  const thickness = CONFIG.thickness;
+
+  // 更新正面顶点
+  particles.forEach(p => {
+    positions[p.index] = p.pos.x;
+    positions[p.index + 1] = p.pos.y;
+    positions[p.index + 2] = p.pos.z + thickness / 2;
+  });
+
+  // 背面顶点跟随正面，保持厚度
+  for (let i = 0; i < positions.length; i += 3) {
+    const z = positions[i + 2];
+    if (Math.abs(z + thickness / 2) < 0.001) {
+      const x = positions[i];
+      const y = positions[i + 1];
+      
+      // 找到对应正面顶点
+      const matchingParticle = particles.find(p => 
+        Math.abs(p.anchor.x - x) < 0.001 && Math.abs(p.anchor.y - y) < 0.001
+      );
+      
+      if (matchingParticle) {
+        positions[i] = matchingParticle.pos.x;
+        positions[i + 1] = matchingParticle.pos.y;
+        positions[i + 2] = matchingParticle.pos.z - thickness / 2;
+      }
     }
   }
-  pos.needsUpdate = true;
-  geometry.computeVertexNormals();
+
+  // 标记顶点更新
+  receipt.geometry.attributes.position.needsUpdate = true;
+  receipt.geometry.computeVertexNormals();
 }
 
-function animate() {
-  requestAnimationFrame(animate);
-  simulate();
-  updateMesh();
-  renderer.render(scene, camera);
+// 交互系统
+function initInteraction() {
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  // 按下/触摸开始
+  function onPointerDown(x, y) {
+    mouse.x = (x / window.innerWidth) * 2 - 1;
+    mouse.y = -(y / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    
+    const intersects = raycaster.intersectObject(receipt);
+    if (intersects.length > 0) {
+      isDragging = true;
+      // 找到最近的质点
+      const hitPoint = intersects[0].point;
+      let minDistance = Infinity;
+      
+      particles.forEach(p => {
+        const worldPos = receipt.localToWorld(p.pos.clone());
+        const distance = worldPos.distanceTo(hitPoint);
+        if (distance < minDistance) {
+          minDistance = distance;
+          dragTarget = p;
+        }
+      });
+    }
+  }
+
+  // 移动/触摸滑动
+  function onPointerMove(x, y) {
+    if (!isDragging || !dragTarget) return;
+    
+    mouse.x = (x / window.innerWidth) * 2 - 1;
+    mouse.y = -(y / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    
+    // 与小票平面相交
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const intersectPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, intersectPoint);
+    
+    // 限制拖拽幅度，只轻微移动
+    const delta = intersectPoint.clone().sub(dragTarget.anchor);
+    delta.multiplyScalar(CONFIG.dragSensitivity);
+    
+    dragTarget.pos.copy(dragTarget.anchor.clone().add(delta));
+  }
+
+  // 松开/触摸结束
+  function onPointerUp() {
+    isDragging = false;
+    dragTarget = null;
+  }
+
+  // 鼠标事件
+  window.addEventListener("mousedown", e => onPointerDown(e.clientX, e.clientY));
+  window.addEventListener("mousemove", e => onPointerMove(e.clientX, e.clientY));
+  window.addEventListener("mouseup", onPointerUp);
+  window.addEventListener("mouseleave", onPointerUp);
+
+  // 触摸事件
+  window.addEventListener("touchstart", e => {
+    e.preventDefault();
+    onPointerDown(e.touches[0].clientX, e.touches[0].clientY);
+  });
+  window.addEventListener("touchmove", e => {
+    e.preventDefault();
+    onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
+  });
+  window.addEventListener("touchend", e => {
+    e.preventDefault();
+    onPointerUp();
+  });
 }
 
-function resize() {
+// 窗口适配
+function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// 交互：只允许极小幅度晃动
-let ray = new THREE.Raycaster();
-let mouse = new THREE.Vector2();
-let grab = null;
-
-function startInteraction(x, y) {
-  mouse.x = (x / window.innerWidth) * 2 - 1;
-  mouse.y = -(y / window.innerHeight) * 2 + 1;
-  ray.setFromCamera(mouse, camera);
-  const hit = ray.intersectObject(receipt);
-  if (hit.length) {
-    let min = 1e9;
-    particles.forEach(p => {
-      const d = p.pos.distanceTo(hit[0].point);
-      if (d < min) {
-        min = d;
-        grab = p;
-      }
-    });
-  }
-}
-
-function moveInteraction(x, y) {
-  if (!grab) return;
-  mouse.x = (x / window.innerWidth) * 2 - 1;
-  mouse.y = -(y / window.innerHeight) * 2 + 1;
-  ray.setFromCamera(mouse, camera);
-
-  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-  const pt = new THREE.Vector3();
-  ray.ray.intersectPlane(plane, pt);
-
-  // 超级限制：只动一点点
-  grab.pos.x = THREE.MathUtils.clamp(pt.x, grab.pos.x - 0.06, grab.pos.x + 0.06);
-  grab.pos.y = THREE.MathUtils.clamp(pt.y, grab.pos.y - 0.08, grab.pos.y + 0.08);
-  grab.pos.z = THREE.MathUtils.clamp(pt.z, -0.06, 0.06);
-}
-
-function endInteraction() {
-  grab = null;
-}
-
-function initInteraction() {
-  window.addEventListener("mousedown", e => startInteraction(e.clientX, e.clientY));
-  window.addEventListener("mousemove", e => moveInteraction(e.clientX, e.clientY));
-  window.addEventListener("mouseup", endInteraction);
-
-  window.addEventListener("touchstart", e => {
-    const t = e.touches[0];
-    startInteraction(t.clientX, t.clientY);
-  });
-  window.addEventListener("touchmove", e => {
-    const t = e.touches[0];
-    moveInteraction(t.clientX, t.clientY);
-  });
-  window.addEventListener("touchend", endInteraction);
+// 动画循环
+function animate() {
+  requestAnimationFrame(animate);
+  simulate();
+  updateGeometry();
+  renderer.render(scene, camera);
 }
 
 </script>
