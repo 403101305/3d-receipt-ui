@@ -9,20 +9,20 @@
 body{
 margin:0;
 overflow:hidden;
-background:#ffffff;
-font-family:-apple-system,BlinkMacSystemFont;
-}
-
-#ui{
-position:fixed;
-top:20px;
-left:20px;
-color:#444;
-font-size:14px;
+background:#f3f3f3;
+font-family:monospace;
 }
 
 canvas{
 display:block;
+}
+
+#label{
+position:fixed;
+top:20px;
+left:20px;
+color:#333;
+font-size:14px;
 }
 
 </style>
@@ -31,32 +31,17 @@ display:block;
 
 <body>
 
-<div id="ui">
-3D Receipt • Drag Paper
+<div id="label">
+3D Receipt • Drag with mouse
 </div>
 
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
 
-let scene,camera,renderer
-let receiptMesh,geometry
-let particles=[]
-let constraints=[]
+let scene = new THREE.Scene()
 
-const SEG_X=20
-const SEG_Y=60
-const WIDTH=1
-const HEIGHT=2
-
-init()
-animate()
-
-function init(){
-
-scene=new THREE.Scene()
-
-camera=new THREE.PerspectiveCamera(
+let camera = new THREE.PerspectiveCamera(
 45,
 window.innerWidth/window.innerHeight,
 0.1,
@@ -65,116 +50,136 @@ window.innerWidth/window.innerHeight,
 
 camera.position.set(0,0,3)
 
-renderer=new THREE.WebGLRenderer({antialias:true})
 
+
+let renderer = new THREE.WebGLRenderer({antialias:true})
 renderer.setSize(window.innerWidth,window.innerHeight)
-
 document.body.appendChild(renderer.domElement)
 
 
 
 // lights
 
-scene.add(new THREE.AmbientLight(0xffffff,.6))
+scene.add(new THREE.AmbientLight(0xffffff,.7))
 
-const light=new THREE.DirectionalLight(0xffffff,1)
-light.position.set(3,4,3)
+let dir = new THREE.DirectionalLight(0xffffff,.9)
+dir.position.set(3,5,2)
+scene.add(dir)
 
-scene.add(light)
+
+
+// receipt texture
+
+let canvas = document.createElement("canvas")
+canvas.width = 512
+canvas.height = 1024
+
+let ctx = canvas.getContext("2d")
+
+ctx.fillStyle="#fffdf5"
+ctx.fillRect(0,0,512,1024)
+
+ctx.fillStyle="#000"
+ctx.font="24px monospace"
+
+let text=[
+"3D GRAPHICS STORE",
+"",
+"1x Vertex Shader .... $5",
+"2x Fragment Shader .. $8",
+"1x Ray Tracing ...... $999",
+"4x GPU Threads ...... $12",
+"",
+"Coupon: REALTIME10",
+"",
+"TOTAL .............. $1024",
+"",
+"Thank you developer!"
+]
+
+text.forEach((t,i)=>{
+ctx.fillText(t,40,80+i*40)
+})
+
+let texture = new THREE.CanvasTexture(canvas)
 
 
 
 // geometry
 
-geometry=new THREE.PlaneGeometry(
-WIDTH,
-HEIGHT,
-SEG_X,
-SEG_Y
+const SEGX=20
+const SEGY=60
+
+let geo = new THREE.PlaneGeometry(
+1,
+2,
+SEGX,
+SEGY
 )
 
-const material=new THREE.MeshStandardMaterial({
-color:0xfffdf3,
-roughness:.9,
-metalness:0,
-side:THREE.DoubleSide
+let mat = new THREE.MeshStandardMaterial({
+map:texture,
+side:THREE.DoubleSide,
+roughness:.9
 })
 
-receiptMesh=new THREE.Mesh(geometry,material)
+let receipt = new THREE.Mesh(geo,mat)
 
-scene.add(receiptMesh)
+scene.add(receipt)
 
 
 
-initParticles()
-initConstraints()
+// particles
 
-window.addEventListener("resize",resize)
+let particles=[]
 
-initMouse()
-
+function idx(x,y){
+return x+(SEGX+1)*y
 }
 
+for(let y=0;y<=SEGY;y++){
 
+for(let x=0;x<=SEGX;x++){
 
-function initParticles(){
-
-for(let y=0;y<=SEG_Y;y++){
-
-for(let x=0;x<=SEG_X;x++){
-
-let px=(x/SEG_X-.5)*WIDTH
-let py=HEIGHT/2-y/SEG_Y*HEIGHT
+let px=(x/SEGX-.5)
+let py=1-y/SEGY*2
 
 particles.push({
-
 pos:new THREE.Vector3(px,py,0),
 prev:new THREE.Vector3(px,py,0),
 lock:y===0
-
 })
 
 }
 
 }
 
-}
 
 
+// constraints
 
-function index(x,y){
-return x+(SEG_X+1)*y
-}
-
-
+let constraints=[]
 
 function connect(a,b){
 
-let dist=particles[a].pos.distanceTo(particles[b].pos)
+let d=particles[a].pos.distanceTo(particles[b].pos)
 
-constraints.push({a,b,dist})
+constraints.push({a,b,d})
 
+}
+
+for(let y=0;y<=SEGY;y++){
+for(let x=0;x<=SEGX;x++){
+
+if(x<SEGX)connect(idx(x,y),idx(x+1,y))
+if(y<SEGY)connect(idx(x,y),idx(x,y+1))
+
+}
 }
 
 
 
-function initConstraints(){
-
-for(let y=0;y<=SEG_Y;y++){
-
-for(let x=0;x<=SEG_X;x++){
-
-if(x<SEG_X) connect(index(x,y),index(x+1,y))
-
-if(y<SEG_Y) connect(index(x,y),index(x,y+1))
-
-}
-
-}
-
-}
-
-
+// physics
 
 function simulate(){
 
@@ -190,8 +195,6 @@ p.pos.add(vel)
 
 })
 
-
-
 for(let i=0;i<4;i++){
 
 constraints.forEach(c=>{
@@ -201,15 +204,12 @@ let p2=particles[c.b]
 
 let diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
 
-let d=diff.length()
+let dist=diff.length()
 
-let err=(d-c.dist)/d
+let err=(dist-c.d)/dist
 
-if(!p1.lock)
-p1.pos.add(diff.clone().multiplyScalar(.5*err))
-
-if(!p2.lock)
-p2.pos.sub(diff.clone().multiplyScalar(.5*err))
+if(!p1.lock)p1.pos.add(diff.clone().multiplyScalar(.5*err))
+if(!p2.lock)p2.pos.sub(diff.clone().multiplyScalar(.5*err))
 
 })
 
@@ -219,33 +219,98 @@ p2.pos.sub(diff.clone().multiplyScalar(.5*err))
 
 
 
+// mesh update
+
 function updateMesh(){
 
-const pos=geometry.attributes.position
+let pos=geo.attributes.position
 
 let i=0
 
-for(let y=0;y<=SEG_Y;y++){
+for(let y=0;y<=SEGY;y++){
+for(let x=0;x<=SEGX;x++){
 
-for(let x=0;x<=SEG_X;x++){
-
-let p=particles[index(x,y)]
+let p=particles[idx(x,y)]
 
 pos.setXYZ(i,p.pos.x,p.pos.y,p.pos.z)
 
 i++
 
 }
-
 }
 
 pos.needsUpdate=true
 
-geometry.computeVertexNormals()
+geo.computeVertexNormals()
 
 }
 
 
+
+// mouse drag
+
+let ray=new THREE.Raycaster()
+let mouse=new THREE.Vector2()
+let grab=null
+
+window.addEventListener("mousedown",e=>{
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+let hit=ray.intersectObject(receipt)
+
+if(hit.length){
+
+let min=1e9
+
+particles.forEach(p=>{
+
+let d=p.pos.distanceTo(hit[0].point)
+
+if(d<min){
+
+min=d
+grab=p
+
+}
+
+})
+
+}
+
+})
+
+
+
+window.addEventListener("mouseup",()=>grab=null)
+
+
+
+window.addEventListener("mousemove",e=>{
+
+if(!grab)return
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+let plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
+
+let pos=new THREE.Vector3()
+
+ray.ray.intersectPlane(plane,pos)
+
+grab.pos.copy(pos)
+
+})
+
+
+
+// animation
 
 function animate(){
 
@@ -259,84 +324,7 @@ renderer.render(scene,camera)
 
 }
 
-
-
-function resize(){
-
-camera.aspect=window.innerWidth/window.innerHeight
-
-camera.updateProjectionMatrix()
-
-renderer.setSize(window.innerWidth,window.innerHeight)
-
-}
-
-
-
-// mouse interaction
-
-let ray=new THREE.Raycaster()
-let mouse=new THREE.Vector2()
-let grabbed=null
-
-function initMouse(){
-
-window.addEventListener("mousedown",e=>{
-
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
-
-ray.setFromCamera(mouse,camera)
-
-let hit=ray.intersectObject(receiptMesh)
-
-if(hit.length){
-
-let min=1e9
-
-particles.forEach(p=>{
-
-let d=p.pos.distanceTo(hit[0].point)
-
-if(d<min){
-
-min=d
-grabbed=p
-
-}
-
-})
-
-}
-
-})
-
-
-
-window.addEventListener("mouseup",()=>grabbed=null)
-
-
-
-window.addEventListener("mousemove",e=>{
-
-if(!grabbed)return
-
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
-
-ray.setFromCamera(mouse,camera)
-
-let plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
-
-let pos=new THREE.Vector3()
-
-ray.ray.intersectPlane(plane,pos)
-
-grabbed.pos.copy(pos)
-
-})
-
-}
+animate()
 
 </script>
 
