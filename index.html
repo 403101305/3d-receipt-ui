@@ -10,7 +10,7 @@
 body{
 margin:0;
 overflow:hidden;
-background:#f5f5f5;
+background: linear-gradient(135deg, #fdfbfb 0%, #f0f4f8 100%);
 font-family:monospace;
 }
 
@@ -18,7 +18,7 @@ font-family:monospace;
 position:fixed;
 top:20px;
 left:20px;
-color:#333;
+color:#555;
 font-size:14px;
 }
 
@@ -55,8 +55,6 @@ function init(){
 
 scene=new THREE.Scene()
 
-
-
 camera=new THREE.PerspectiveCamera(
 45,
 window.innerWidth/window.innerHeight,
@@ -66,72 +64,68 @@ window.innerWidth/window.innerHeight,
 
 camera.position.set(0,0,3)
 
-
-
 renderer=new THREE.WebGLRenderer({
 antialias:true,
-alpha:false
+alpha:true
 })
 
 renderer.setSize(window.innerWidth,window.innerHeight)
+renderer.setClearColor(0xf0f4f8, 1);
 document.body.appendChild(renderer.domElement)
 
-
-
 // lighting
+scene.add(new THREE.AmbientLight(0xffffff,.8))
 
-scene.add(new THREE.AmbientLight(0xffffff,.7))
-
-let light=new THREE.DirectionalLight(0xffffff,.9)
+let light=new THREE.DirectionalLight(0xffffff,1)
 light.position.set(3,5,3)
-
 scene.add(light)
 
-
+let fillLight = new THREE.DirectionalLight(0xffffff,0.4)
+fillLight.position.set(-3,2,2)
+scene.add(fillLight)
 
 // receipt texture
-
 let canvas=document.createElement("canvas")
 canvas.width=512
 canvas.height=1024
 
 let ctx=canvas.getContext("2d")
 
-ctx.fillStyle="#fff8e8"
+ctx.fillStyle="#ffffff"
 ctx.fillRect(0,0,512,1024)
 
-ctx.fillStyle="#111"
-ctx.font="24px monospace"
+ctx.fillStyle="#222"
+ctx.font="26px monospace"
 
+// 真实小票内容
 let lines=[
-
-"3D GRAPHICS STORE",
 "",
-"1x Vertex Shader .... $5",
-"2x Fragment Shader .. $8",
-"1x Ray Tracing ...... $999",
-"4x GPU Threads ...... $12",
+"  SHOPPING MART",
+"  -------------------",
+"  2026/04/03 15:22",
 "",
-"Coupon: REALTIME10",
+"  Snacks............$5.90",
+"  Cola..............$3.50",
+"  Bread.............$2.80",
+"  Milk..............$4.20",
+"  Egg 10pcs.........$6.10",
+"  Tissue............$1.99",
 "",
-"TOTAL .............. $1024",
+"  SUBTOTAL.........$24.49",
+"  TAX(5%)...........$1.22",
+"  -------------------",
+"  TOTAL............$25.71",
 "",
-"Thank you developer!"
-
+"  Thank you!"
 ]
 
 lines.forEach((t,i)=>{
-
-ctx.fillText(t,40,80+i*40)
-
+ctx.fillText(t,40,80+i*42)
 })
 
 let texture=new THREE.CanvasTexture(canvas)
 
-
-
 // geometry
-
 geometry=new THREE.PlaneGeometry(
 1,
 2,
@@ -139,276 +133,173 @@ SEGX,
 SEGY
 )
 
-
-
-let material=new THREE.MeshBasicMaterial({
+let material=new THREE.MeshStandardMaterial({
 map:texture,
-side:THREE.DoubleSide
+side:THREE.DoubleSide,
+roughness:0.8,
+metalness:0.1
 })
 
 receipt=new THREE.Mesh(geometry,material)
-
 scene.add(receipt)
-
-
 
 initParticles()
 initConstraints()
 initInteraction()
 
 window.addEventListener("resize",resize)
-
 }
-
-
 
 function idx(x,y){
 return x+(SEGX+1)*y
 }
 
-
-
 function initParticles(){
-
 for(let y=0;y<=SEGY;y++){
 for(let x=0;x<=SEGX;x++){
-
 let px=(x/SEGX-.5)
 let py=1-y/SEGY*2
-
 particles.push({
 pos:new THREE.Vector3(px,py,0),
 prev:new THREE.Vector3(px,py,0),
 lock:y===0
 })
-
 }
 }
-
 }
-
-
 
 function connect(a,b){
-
 let d=particles[a].pos.distanceTo(particles[b].pos)
-
 constraints.push({a,b,d})
-
 }
-
-
 
 function initConstraints(){
-
 for(let y=0;y<=SEGY;y++){
 for(let x=0;x<=SEGX;x++){
-
 if(x<SEGX)connect(idx(x,y),idx(x+1,y))
 if(y<SEGY)connect(idx(x,y),idx(x,y+1))
-
 }
 }
-
 }
-
-
 
 function simulate(){
-
 particles.forEach(p=>{
-
 if(p.lock)return
-
 let vel=p.pos.clone().sub(p.prev)
-
 p.prev.copy(p.pos)
-
 p.pos.add(vel)
 
-// subtle natural paper movement
-
-p.pos.z += Math.sin(Date.now()*0.002+p.pos.y*4)*0.001
-
+// 轻微自然飘动，不翻转
+p.pos.z += Math.sin(Date.now()*0.0015+p.pos.y*3)*0.0006
 })
-
-
 
 for(let i=0;i<4;i++){
-
 constraints.forEach(c=>{
-
 let p1=particles[c.a]
 let p2=particles[c.b]
-
 let diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
-
 let dist=diff.length()
-
 let err=(dist-c.d)/dist
-
 if(!p1.lock)
 p1.pos.add(diff.clone().multiplyScalar(.5*err))
-
 if(!p2.lock)
 p2.pos.sub(diff.clone().multiplyScalar(.5*err))
-
 })
-
 }
-
 }
-
-
 
 function updateMesh(){
-
 let pos=geometry.attributes.position
-
 let i=0
-
 for(let y=0;y<=SEGY;y++){
 for(let x=0;x<=SEGX;x++){
-
 let p=particles[idx(x,y)]
 
+// 限制Z轴范围，防止翻转
+p.pos.z = Math.max(-0.2, Math.min(0.2, p.pos.z))
+
 pos.setXYZ(i,p.pos.x,p.pos.y,p.pos.z)
-
 i++
-
 }
 }
-
 pos.needsUpdate=true
-
 geometry.computeVertexNormals()
-
 }
-
-
 
 function animate(){
-
 requestAnimationFrame(animate)
-
 simulate()
 updateMesh()
-
 renderer.render(scene,camera)
-
 }
-
-
 
 function resize(){
-
 camera.aspect=window.innerWidth/window.innerHeight
 camera.updateProjectionMatrix()
-
 renderer.setSize(window.innerWidth,window.innerHeight)
-
 }
 
-
-
-// interaction (mouse + touch)
-
+// interaction
 let ray=new THREE.Raycaster()
 let mouse=new THREE.Vector2()
 let grab=null
 
-
-
 function startInteraction(x,y){
-
 mouse.x=x/window.innerWidth*2-1
 mouse.y=-(y/window.innerHeight)*2+1
-
 ray.setFromCamera(mouse,camera)
-
 let hit=ray.intersectObject(receipt)
-
 if(hit.length){
-
 let min=1e9
-
 particles.forEach(p=>{
-
 let d=p.pos.distanceTo(hit[0].point)
-
 if(d<min){
-
 min=d
 grab=p
-
 }
-
 })
-
 }
-
 }
-
-
 
 function moveInteraction(x,y){
-
 if(!grab)return
 
 mouse.x=x/window.innerWidth*2-1
 mouse.y=-(y/window.innerHeight)*2+1
-
 ray.setFromCamera(mouse,camera)
 
 let plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
-
 let pos=new THREE.Vector3()
-
 ray.ray.intersectPlane(plane,pos)
 
-grab.pos.copy(pos)
-
+// 限制拖拽幅度，不让小票飞起来
+grab.pos.x = THREE.MathUtils.clamp(pos.x, -0.5, 0.5)
+grab.pos.y = THREE.MathUtils.clamp(pos.y, -1.8, 0.2)
+grab.pos.z = THREE.MathUtils.clamp(pos.z, -0.15, 0.15)
 }
-
-
 
 function endInteraction(){
-
 grab=null
-
 }
 
-
-
 function initInteraction(){
-
-// mouse
-
 window.addEventListener("mousedown",e=>{
 startInteraction(e.clientX,e.clientY)
 })
-
 window.addEventListener("mousemove",e=>{
 moveInteraction(e.clientX,e.clientY)
 })
-
 window.addEventListener("mouseup",endInteraction)
-
-
-// touch
 
 window.addEventListener("touchstart",e=>{
 let t=e.touches[0]
 startInteraction(t.clientX,t.clientY)
 })
-
 window.addEventListener("touchmove",e=>{
 let t=e.touches[0]
 moveInteraction(t.clientX,t.clientY)
 })
-
 window.addEventListener("touchend",endInteraction)
-
 }
 
 </script>
