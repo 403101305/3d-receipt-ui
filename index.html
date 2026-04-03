@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>3D Receipt UI Demo</title>
+
+<style>
+
+body{
+margin:0;
+overflow:hidden;
+background:#ffffff;
+font-family:-apple-system,BlinkMacSystemFont;
+}
+
+#ui{
+position:fixed;
+top:20px;
+left:20px;
+font-size:14px;
+color:#444;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+3D Receipt Demo • Drag Paper
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.161/build/three.min.js"></script>
+
+<script>
+
+const scene=new THREE.Scene()
+
+const camera=new THREE.PerspectiveCamera(
+45,
+window.innerWidth/window.innerHeight,
+0.1,
+100
+)
+
+camera.position.set(0,0,3)
+
+const renderer=new THREE.WebGLRenderer({antialias:true})
+
+renderer.setSize(window.innerWidth,window.innerHeight)
+
+document.body.appendChild(renderer.domElement)
+
+
+
+// lighting
+
+scene.add(new THREE.AmbientLight(0xffffff,.6))
+
+const light=new THREE.DirectionalLight(0xffffff,1)
+
+light.position.set(2,3,2)
+
+scene.add(light)
+
+
+
+// receipt mesh
+
+const width=1
+const height=2
+
+const segX=20
+const segY=60
+
+const geo=new THREE.PlaneGeometry(width,height,segX,segY)
+
+const mat=new THREE.MeshStandardMaterial({
+color:0xfffdf5,
+side:THREE.DoubleSide,
+roughness:.9
+})
+
+const receipt=new THREE.Mesh(geo,mat)
+
+scene.add(receipt)
+
+
+
+// physics particles
+
+const particles=[]
+
+function idx(x,y){
+return x+(segX+1)*y
+}
+
+class Particle{
+
+constructor(x,y,z){
+
+this.pos=new THREE.Vector3(x,y,z)
+this.prev=new THREE.Vector3(x,y,z)
+this.lock=false
+
+}
+
+}
+
+
+
+for(let y=0;y<=segY;y++){
+
+for(let x=0;x<=segX;x++){
+
+const vx=(x/segX-.5)*width
+const vy=height/2-y/segY*height
+
+const p=new Particle(vx,vy,0)
+
+if(y===0)p.lock=true
+
+particles.push(p)
+
+}
+
+}
+
+
+
+// constraints
+
+const constraints=[]
+
+function connect(a,b){
+
+const dist=particles[a].pos.distanceTo(particles[b].pos)
+
+constraints.push({a,b,dist})
+
+}
+
+
+
+for(let y=0;y<=segY;y++){
+
+for(let x=0;x<=segX;x++){
+
+if(x<segX)connect(idx(x,y),idx(x+1,y))
+if(y<segY)connect(idx(x,y),idx(x,y+1))
+
+}
+
+}
+
+
+
+function solve(){
+
+constraints.forEach(c=>{
+
+const p1=particles[c.a]
+const p2=particles[c.b]
+
+const diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
+
+const d=diff.length()
+
+const err=(d-c.dist)/d
+
+if(!p1.lock)p1.pos.add(diff.clone().multiplyScalar(.5*err))
+if(!p2.lock)p2.pos.sub(diff.clone().multiplyScalar(.5*err))
+
+})
+
+}
+
+
+
+// mouse drag
+
+const ray=new THREE.Raycaster()
+
+const mouse=new THREE.Vector2()
+
+let grab=null
+
+
+
+window.addEventListener("mousedown",e=>{
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+const hit=ray.intersectObject(receipt)
+
+if(hit.length){
+
+let min=1e9
+
+particles.forEach(p=>{
+
+const d=p.pos.distanceTo(hit[0].point)
+
+if(d<min){
+
+min=d
+grab=p
+
+}
+
+})
+
+}
+
+})
+
+
+
+window.addEventListener("mouseup",()=>grab=null)
+
+
+
+window.addEventListener("mousemove",e=>{
+
+if(!grab)return
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+const plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
+
+const pos=new THREE.Vector3()
+
+ray.ray.intersectPlane(plane,pos)
+
+grab.pos.copy(pos)
+
+})
+
+
+
+// simulate
+
+function simulate(){
+
+particles.forEach(p=>{
+
+if(p.lock)return
+
+const vel=p.pos.clone().sub(p.prev)
+
+p.prev.copy(p.pos)
+
+p.pos.add(vel)
+
+})
+
+for(let i=0;i<3;i++)solve()
+
+}
+
+
+
+// update mesh
+
+function updateMesh(){
+
+const pos=geo.attributes.position
+
+let i=0
+
+for(let y=0;y<=segY;y++){
+
+for(let x=0;x<=segX;x++){
+
+const p=particles[idx(x,y)]
+
+pos.setXYZ(i,p.pos.x,p.pos.y,p.pos.z)
+
+i++
+
+}
+
+}
+
+pos.needsUpdate=true
+
+geo.computeVertexNormals()
+
+}
+
+
+
+// animation loop
+
+function animate(){
+
+requestAnimationFrame(animate)
+
+simulate()
+
+updateMesh()
+
+renderer.render(scene,camera)
+
+}
+
+animate()
+
+
+
+</script>
+
+</body>
+</html>
