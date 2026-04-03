@@ -9,12 +9,8 @@
 body{
 margin:0;
 overflow:hidden;
-background:#f3f3f3;
+background:#ececec;
 font-family:monospace;
-}
-
-canvas{
-display:block;
 }
 
 #label{
@@ -25,8 +21,11 @@ color:#333;
 font-size:14px;
 }
 
-</style>
+canvas{
+display:block;
+}
 
+</style>
 </head>
 
 <body>
@@ -39,9 +38,23 @@ font-size:14px;
 
 <script>
 
-let scene = new THREE.Scene()
+let scene,camera,renderer
+let receipt,geometry
 
-let camera = new THREE.PerspectiveCamera(
+const SEGX=20
+const SEGY=60
+
+let particles=[]
+let constraints=[]
+
+init()
+animate()
+
+function init(){
+
+scene=new THREE.Scene()
+
+camera=new THREE.PerspectiveCamera(
 45,
 window.innerWidth/window.innerHeight,
 0.1,
@@ -52,37 +65,27 @@ camera.position.set(0,0,3)
 
 
 
-let renderer = new THREE.WebGLRenderer({antialias:true})
+renderer=new THREE.WebGLRenderer({antialias:true})
 renderer.setSize(window.innerWidth,window.innerHeight)
 document.body.appendChild(renderer.domElement)
 
 
 
-// lights
-
-scene.add(new THREE.AmbientLight(0xffffff,.7))
-
-let dir = new THREE.DirectionalLight(0xffffff,.9)
-dir.position.set(3,5,2)
-scene.add(dir)
-
-
-
 // receipt texture
 
-let canvas = document.createElement("canvas")
-canvas.width = 512
-canvas.height = 1024
+let canvas=document.createElement("canvas")
+canvas.width=512
+canvas.height=1024
 
-let ctx = canvas.getContext("2d")
+let ctx=canvas.getContext("2d")
 
-ctx.fillStyle="#fffdf5"
+ctx.fillStyle="#fffaf0"
 ctx.fillRect(0,0,512,1024)
 
 ctx.fillStyle="#000"
 ctx.font="24px monospace"
 
-let text=[
+let lines=[
 "3D GRAPHICS STORE",
 "",
 "1x Vertex Shader .... $5",
@@ -97,48 +100,54 @@ let text=[
 "Thank you developer!"
 ]
 
-text.forEach((t,i)=>{
+lines.forEach((t,i)=>{
 ctx.fillText(t,40,80+i*40)
 })
 
-let texture = new THREE.CanvasTexture(canvas)
+let texture=new THREE.CanvasTexture(canvas)
 
 
 
 // geometry
 
-const SEGX=20
-const SEGY=60
-
-let geo = new THREE.PlaneGeometry(
+geometry=new THREE.PlaneGeometry(
 1,
 2,
 SEGX,
 SEGY
 )
 
-let mat = new THREE.MeshStandardMaterial({
+let material=new THREE.MeshBasicMaterial({
 map:texture,
-side:THREE.DoubleSide,
-roughness:.9
+side:THREE.DoubleSide
 })
 
-let receipt = new THREE.Mesh(geo,mat)
+receipt=new THREE.Mesh(geometry,material)
 
 scene.add(receipt)
 
 
 
-// particles
+initParticles()
+initConstraints()
 
-let particles=[]
+initMouse()
+
+window.addEventListener("resize",resize)
+
+}
+
+
 
 function idx(x,y){
 return x+(SEGX+1)*y
 }
 
-for(let y=0;y<=SEGY;y++){
 
+
+function initParticles(){
+
+for(let y=0;y<=SEGY;y++){
 for(let x=0;x<=SEGX;x++){
 
 let px=(x/SEGX-.5)
@@ -151,14 +160,11 @@ lock:y===0
 })
 
 }
+}
 
 }
 
 
-
-// constraints
-
-let constraints=[]
 
 function connect(a,b){
 
@@ -167,6 +173,10 @@ let d=particles[a].pos.distanceTo(particles[b].pos)
 constraints.push({a,b,d})
 
 }
+
+
+
+function initConstraints(){
 
 for(let y=0;y<=SEGY;y++){
 for(let x=0;x<=SEGX;x++){
@@ -177,9 +187,9 @@ if(y<SEGY)connect(idx(x,y),idx(x,y+1))
 }
 }
 
+}
 
 
-// physics
 
 function simulate(){
 
@@ -194,6 +204,8 @@ p.prev.copy(p.pos)
 p.pos.add(vel)
 
 })
+
+
 
 for(let i=0;i<4;i++){
 
@@ -219,11 +231,9 @@ if(!p2.lock)p2.pos.sub(diff.clone().multiplyScalar(.5*err))
 
 
 
-// mesh update
-
 function updateMesh(){
 
-let pos=geo.attributes.position
+let pos=geometry.attributes.position
 
 let i=0
 
@@ -241,17 +251,43 @@ i++
 
 pos.needsUpdate=true
 
-geo.computeVertexNormals()
+geometry.computeVertexNormals()
 
 }
 
 
 
-// mouse drag
+function animate(){
+
+requestAnimationFrame(animate)
+
+simulate()
+
+updateMesh()
+
+renderer.render(scene,camera)
+
+}
+
+
+
+function resize(){
+
+camera.aspect=window.innerWidth/window.innerHeight
+camera.updateProjectionMatrix()
+renderer.setSize(window.innerWidth,window.innerHeight)
+
+}
+
+
+
+// mouse interaction
 
 let ray=new THREE.Raycaster()
 let mouse=new THREE.Vector2()
 let grab=null
+
+function initMouse(){
 
 window.addEventListener("mousedown",e=>{
 
@@ -308,23 +344,7 @@ grab.pos.copy(pos)
 
 })
 
-
-
-// animation
-
-function animate(){
-
-requestAnimationFrame(animate)
-
-simulate()
-
-updateMesh()
-
-renderer.render(scene,camera)
-
 }
-
-animate()
 
 </script>
 
