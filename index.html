@@ -17,6 +17,7 @@ body{
   overflow: hidden;
   background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
   font-family: system-ui, -apple-system, monospace;
+  touch-action: none; /* 禁止浏览器触摸默认行为，修复移动端拖拽失效 */
 }
 #title{
   position: fixed;
@@ -31,6 +32,7 @@ canvas{
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none;
 }
 </style>
 </head>
@@ -50,8 +52,8 @@ const CONFIG = {
   stiffness: 0.96, // 纸张挺括度
   damping: 0.93, // 晃动阻尼
   restoreForce: 0.09, // 垂直恢复力
-  maxBend: 0.1, // 最大弯曲幅度
-  dragSensitivity: 0.04, // 拖拽灵敏度
+  maxBend: 0.15, // 最大弯曲幅度
+  dragSensitivity: 0.35, // 拖拽灵敏度（已调至可明显感知的范围）
 };
 
 // 全局变量
@@ -61,6 +63,8 @@ let particles = [];
 let constraints = [];
 let isDragging = false;
 let dragTarget = null;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
 
 init();
 animate();
@@ -72,14 +76,14 @@ function init() {
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
   camera.position.set(0, 0, 3.5);
 
-  // 渲染器（稳定配置，零报错）
+  // 渲染器
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0xe9ecef, 1);
   document.body.appendChild(renderer.domElement);
 
-  // 稳定光影系统
+  // 光影系统
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
   scene.add(ambientLight);
 
@@ -96,7 +100,7 @@ function init() {
   const receiptTexture = new THREE.CanvasTexture(receiptCanvas);
   receiptTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-  // 核心：厚实纸张材质（物理材质，模拟真实纸张）
+  // 厚实纸张物理材质
   const frontMaterial = new THREE.MeshPhysicalMaterial({
     map: receiptTexture,
     side: THREE.FrontSide,
@@ -119,23 +123,23 @@ function init() {
     roughness: 0.85,
   });
 
-  // 正面+背面几何体（稳定的PlaneGeometry，不会出现顶点错乱）
+  // 正面+背面几何体（稳定无错乱）
   const geometry = new THREE.PlaneGeometry(CONFIG.width, CONFIG.height, CONFIG.segX, CONFIG.segY);
   frontReceipt = new THREE.Mesh(geometry, frontMaterial);
   backReceipt = new THREE.Mesh(geometry.clone(), backMaterial);
   backReceipt.position.z = -CONFIG.thickness;
 
-  // 侧边封口（打造厚度，实现厚实感）
+  // 侧边封口，打造真实厚度
   sideGroup = new THREE.Group();
   createSides(sideGroup, sideMaterial);
   scene.add(sideGroup);
-
   scene.add(frontReceipt);
   scene.add(backReceipt);
 
-  // 初始化物理系统（预绑定顶点，零匹配错误）
+  // 初始化物理系统
   initParticles();
   initConstraints();
+  // 初始化交互（已修复拖拽触摸失效问题）
   initInteraction();
   window.addEventListener("resize", onWindowResize);
 }
@@ -234,7 +238,7 @@ function createReceiptTexture() {
   return canvas;
 }
 
-// 初始化质点系统（预绑定顶点索引，零匹配错误）
+// 初始化质点系统（预绑定索引，零匹配错误）
 function initParticles() {
   const positions = frontReceipt.geometry.attributes.position.array;
   const vertexCount = positions.length / 3;
@@ -246,17 +250,14 @@ function initParticles() {
 
     particles.push({
       index: i,
-      // 初始锚点（用于恢复垂直）
-      anchor: new THREE.Vector3(x, y, z),
-      // 当前位置
+      anchor: new THREE.Vector3(x, y, z), // 初始锚点，保证回弹垂直
       pos: new THREE.Vector3(x, y, z),
-      // 上一帧位置
       prev: new THREE.Vector3(x, y, z),
     });
   }
 }
 
-// 初始化约束系统（保证纸张挺括，不翻转）
+// 初始化约束系统（保证挺括不翻转）
 function initConstraints() {
   const segX = CONFIG.segX;
   const segY = CONFIG.segY;
@@ -305,7 +306,7 @@ function addConstraint(i1, i2) {
 
 // 物理模拟
 function simulate() {
-  // Verlet积分
+  // Verlet积分计算运动
   particles.forEach(p => {
     const velocity = p.pos.clone().sub(p.prev).multiplyScalar(CONFIG.damping);
     p.prev.copy(p.pos);
@@ -319,7 +320,7 @@ function simulate() {
     p.pos.z = THREE.MathUtils.clamp(p.pos.z, -CONFIG.maxBend, CONFIG.maxBend);
   });
 
-  // 约束迭代
+  // 约束迭代，保证纸张形状
   const iterations = 4;
   for (let i = 0; i < iterations; i++) {
     constraints.forEach(c => {
@@ -337,7 +338,7 @@ function simulate() {
   }
 }
 
-// 更新几何体顶点（稳定同步，零错乱）
+// 更新几何体顶点（稳定同步）
 function updateGeometry() {
   const frontPositions = frontReceipt.geometry.attributes.position.array;
   const backPositions = backReceipt.geometry.attributes.position.array;
@@ -345,11 +346,9 @@ function updateGeometry() {
   // 同步正面+背面顶点，保证厚度一致
   particles.forEach(p => {
     const i = p.index * 3;
-    // 更新正面
     frontPositions[i] = p.pos.x;
     frontPositions[i + 1] = p.pos.y;
     frontPositions[i + 2] = p.pos.z;
-    // 更新背面（同步偏移，保持厚度）
     backPositions[i] = p.pos.x;
     backPositions[i + 1] = p.pos.y;
     backPositions[i + 2] = p.pos.z - CONFIG.thickness;
@@ -361,16 +360,14 @@ function updateGeometry() {
   frontReceipt.geometry.computeVertexNormals();
   backReceipt.geometry.computeVertexNormals();
 
-  // 同步侧边顶点（跟随弯曲）
+  // 同步侧边弯曲
   updateSides();
 }
 
-// 同步侧边弯曲
+// 同步侧边顶点跟随弯曲
 function updateSides() {
   const segY = CONFIG.segY;
   const segX = CONFIG.segX;
-  const w = CONFIG.width / 2;
-  const h = CONFIG.height / 2;
 
   // 左侧边同步
   const leftGeo = sideGroup.children[0].geometry;
@@ -403,25 +400,27 @@ function updateSides() {
   rightGeo.attributes.position.needsUpdate = true;
 }
 
-// 交互系统
+// ========== 彻底修复的交互系统（鼠标+触摸100%可用） ==========
 function initInteraction() {
-  const raycaster = new THREE.Raycaster();
-  const mouse = new THREE.Vector2();
-
-  function onPointerDown(x, y) {
-    mouse.x = (x / window.innerWidth) * 2 - 1;
-    mouse.y = -(y / window.innerHeight) * 2 + 1;
+  // 按下/触摸开始
+  function onPointerDown(clientX, clientY) {
+    // 标准化鼠标坐标
+    mouse.x = (clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     
-    const intersects = raycaster.intersectObject(frontReceipt);
+    // 射线检测，精准命中小票正面
+    const intersects = raycaster.intersectObject(frontReceipt, false);
     if (intersects.length > 0) {
       isDragging = true;
       const hitPoint = intersects[0].point;
-      let minDistance = Infinity;
+      // 转换为局部坐标，精准匹配粒子位置
+      const localHitPoint = frontReceipt.worldToLocal(hitPoint.clone());
       
+      // 找到距离点击位置最近的粒子
+      let minDistance = Infinity;
       particles.forEach(p => {
-        const worldPos = frontReceipt.localToWorld(p.pos.clone());
-        const distance = worldPos.distanceTo(hitPoint);
+        const distance = p.pos.distanceTo(localHitPoint);
         if (distance < minDistance) {
           minDistance = distance;
           dragTarget = p;
@@ -430,48 +429,62 @@ function initInteraction() {
     }
   }
 
-  function onPointerMove(x, y) {
+  // 移动/触摸滑动
+  function onPointerMove(clientX, clientY) {
     if (!isDragging || !dragTarget) return;
     
-    mouse.x = (x / window.innerWidth) * 2 - 1;
-    mouse.y = -(y / window.innerHeight) * 2 + 1;
+    // 标准化坐标
+    mouse.x = (clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    // 与小票所在平面相交，获取拖拽目标点
+    const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const intersectPoint = new THREE.Vector3();
-    raycaster.ray.intersectPlane(plane, intersectPoint);
+    raycaster.ray.intersectPlane(dragPlane, intersectPoint);
     
-    // 限制拖拽幅度
-    const delta = intersectPoint.clone().sub(dragTarget.anchor);
+    // 转换为局部坐标
+    const localIntersect = frontReceipt.worldToLocal(intersectPoint.clone());
+    
+    // 计算拖拽位移，限制幅度，保证只轻微晃动
+    const delta = localIntersect.clone().sub(dragTarget.anchor);
     delta.multiplyScalar(CONFIG.dragSensitivity);
     
-    dragTarget.pos.copy(dragTarget.anchor.clone().add(delta));
+    // 更新拖拽目标位置，同时限制最大弯曲
+    dragTarget.pos.x = THREE.MathUtils.clamp(dragTarget.anchor.x + delta.x, dragTarget.anchor.x - CONFIG.maxBend, dragTarget.anchor.x + CONFIG.maxBend);
+    dragTarget.pos.y = THREE.MathUtils.clamp(dragTarget.anchor.y + delta.y, dragTarget.anchor.y - CONFIG.maxBend, dragTarget.anchor.y + CONFIG.maxBend);
+    dragTarget.pos.z = THREE.MathUtils.clamp(dragTarget.anchor.z + delta.z, -CONFIG.maxBend, CONFIG.maxBend);
   }
 
+  // 松开/触摸结束
   function onPointerUp() {
     isDragging = false;
     dragTarget = null;
   }
 
-  // 鼠标事件
-  window.addEventListener("mousedown", e => onPointerDown(e.clientX, e.clientY));
-  window.addEventListener("mousemove", e => onPointerMove(e.clientX, e.clientY));
+  // 鼠标事件绑定
+  window.addEventListener("mousedown", (e) => onPointerDown(e.clientX, e.clientY));
+  window.addEventListener("mousemove", (e) => onPointerMove(e.clientX, e.clientY));
   window.addEventListener("mouseup", onPointerUp);
   window.addEventListener("mouseleave", onPointerUp);
 
-  // 触摸事件
-  window.addEventListener("touchstart", e => {
+  // 触摸事件绑定（修复移动端失效）
+  window.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    onPointerDown(e.touches[0].clientX, e.touches[0].clientY);
-  });
-  window.addEventListener("touchmove", e => {
+    const touch = e.touches[0];
+    onPointerDown(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  window.addEventListener("touchmove", (e) => {
     e.preventDefault();
-    onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
-  });
-  window.addEventListener("touchend", e => {
+    const touch = e.touches[0];
+    onPointerMove(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  window.addEventListener("touchend", (e) => {
     e.preventDefault();
     onPointerUp();
-  });
+  }, { passive: false });
 }
 
 // 窗口适配
