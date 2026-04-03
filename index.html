@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>3D Receipt UI Demo</title>
+<title>3D Receipt UI</title>
 
 <style>
 
@@ -17,26 +17,46 @@ font-family:-apple-system,BlinkMacSystemFont;
 position:fixed;
 top:20px;
 left:20px;
-font-size:14px;
 color:#444;
+font-size:14px;
+}
+
+canvas{
+display:block;
 }
 
 </style>
+
 </head>
 
 <body>
 
 <div id="ui">
-3D Receipt Demo • Drag Paper
+3D Receipt • Drag Paper
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.161/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 
 <script>
 
-const scene=new THREE.Scene()
+let scene,camera,renderer
+let receiptMesh,geometry
+let particles=[]
+let constraints=[]
 
-const camera=new THREE.PerspectiveCamera(
+const SEG_X=20
+const SEG_Y=60
+const WIDTH=1
+const HEIGHT=2
+
+init()
+animate()
+
+function init(){
+
+scene=new THREE.Scene()
+
+camera=new THREE.PerspectiveCamera(
 45,
 window.innerWidth/window.innerHeight,
 0.1,
@@ -45,7 +65,7 @@ window.innerWidth/window.innerHeight,
 
 camera.position.set(0,0,3)
 
-const renderer=new THREE.WebGLRenderer({antialias:true})
+renderer=new THREE.WebGLRenderer({antialias:true})
 
 renderer.setSize(window.innerWidth,window.innerHeight)
 
@@ -53,74 +73,68 @@ document.body.appendChild(renderer.domElement)
 
 
 
-// lighting
+// lights
 
 scene.add(new THREE.AmbientLight(0xffffff,.6))
 
 const light=new THREE.DirectionalLight(0xffffff,1)
-
-light.position.set(2,3,2)
+light.position.set(3,4,3)
 
 scene.add(light)
 
 
 
-// receipt mesh
+// geometry
 
-const width=1
-const height=2
+geometry=new THREE.PlaneGeometry(
+WIDTH,
+HEIGHT,
+SEG_X,
+SEG_Y
+)
 
-const segX=20
-const segY=60
-
-const geo=new THREE.PlaneGeometry(width,height,segX,segY)
-
-const mat=new THREE.MeshStandardMaterial({
-color:0xfffdf5,
-side:THREE.DoubleSide,
-roughness:.9
+const material=new THREE.MeshStandardMaterial({
+color:0xfffdf3,
+roughness:.9,
+metalness:0,
+side:THREE.DoubleSide
 })
 
-const receipt=new THREE.Mesh(geo,mat)
+receiptMesh=new THREE.Mesh(geometry,material)
 
-scene.add(receipt)
+scene.add(receiptMesh)
 
 
 
-// physics particles
+initParticles()
+initConstraints()
 
-const particles=[]
+window.addEventListener("resize",resize)
 
-function idx(x,y){
-return x+(segX+1)*y
-}
-
-class Particle{
-
-constructor(x,y,z){
-
-this.pos=new THREE.Vector3(x,y,z)
-this.prev=new THREE.Vector3(x,y,z)
-this.lock=false
-
-}
+initMouse()
 
 }
 
 
 
-for(let y=0;y<=segY;y++){
+function initParticles(){
 
-for(let x=0;x<=segX;x++){
+for(let y=0;y<=SEG_Y;y++){
 
-const vx=(x/segX-.5)*width
-const vy=height/2-y/segY*height
+for(let x=0;x<=SEG_X;x++){
 
-const p=new Particle(vx,vy,0)
+let px=(x/SEG_X-.5)*WIDTH
+let py=HEIGHT/2-y/SEG_Y*HEIGHT
 
-if(y===0)p.lock=true
+particles.push({
 
-particles.push(p)
+pos:new THREE.Vector3(px,py,0),
+prev:new THREE.Vector3(px,py,0),
+lock:y===0
+
+})
+
+}
 
 }
 
@@ -128,13 +142,15 @@ particles.push(p)
 
 
 
-// constraints
+function index(x,y){
+return x+(SEG_X+1)*y
+}
 
-const constraints=[]
+
 
 function connect(a,b){
 
-const dist=particles[a].pos.distanceTo(particles[b].pos)
+let dist=particles[a].pos.distanceTo(particles[b].pos)
 
 constraints.push({a,b,dist})
 
@@ -142,109 +158,23 @@ constraints.push({a,b,dist})
 
 
 
-for(let y=0;y<=segY;y++){
+function initConstraints(){
 
-for(let x=0;x<=segX;x++){
+for(let y=0;y<=SEG_Y;y++){
 
-if(x<segX)connect(idx(x,y),idx(x+1,y))
-if(y<segY)connect(idx(x,y),idx(x,y+1))
+for(let x=0;x<=SEG_X;x++){
+
+if(x<SEG_X) connect(index(x,y),index(x+1,y))
+
+if(y<SEG_Y) connect(index(x,y),index(x,y+1))
+
+}
 
 }
 
 }
 
 
-
-function solve(){
-
-constraints.forEach(c=>{
-
-const p1=particles[c.a]
-const p2=particles[c.b]
-
-const diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
-
-const d=diff.length()
-
-const err=(d-c.dist)/d
-
-if(!p1.lock)p1.pos.add(diff.clone().multiplyScalar(.5*err))
-if(!p2.lock)p2.pos.sub(diff.clone().multiplyScalar(.5*err))
-
-})
-
-}
-
-
-
-// mouse drag
-
-const ray=new THREE.Raycaster()
-
-const mouse=new THREE.Vector2()
-
-let grab=null
-
-
-
-window.addEventListener("mousedown",e=>{
-
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
-
-ray.setFromCamera(mouse,camera)
-
-const hit=ray.intersectObject(receipt)
-
-if(hit.length){
-
-let min=1e9
-
-particles.forEach(p=>{
-
-const d=p.pos.distanceTo(hit[0].point)
-
-if(d<min){
-
-min=d
-grab=p
-
-}
-
-})
-
-}
-
-})
-
-
-
-window.addEventListener("mouseup",()=>grab=null)
-
-
-
-window.addEventListener("mousemove",e=>{
-
-if(!grab)return
-
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
-
-ray.setFromCamera(mouse,camera)
-
-const plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
-
-const pos=new THREE.Vector3()
-
-ray.ray.intersectPlane(plane,pos)
-
-grab.pos.copy(pos)
-
-})
-
-
-
-// simulate
 
 function simulate(){
 
@@ -252,7 +182,7 @@ particles.forEach(p=>{
 
 if(p.lock)return
 
-const vel=p.pos.clone().sub(p.prev)
+let vel=p.pos.clone().sub(p.prev)
 
 p.prev.copy(p.pos)
 
@@ -260,25 +190,46 @@ p.pos.add(vel)
 
 })
 
-for(let i=0;i<3;i++)solve()
+
+
+for(let i=0;i<4;i++){
+
+constraints.forEach(c=>{
+
+let p1=particles[c.a]
+let p2=particles[c.b]
+
+let diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
+
+let d=diff.length()
+
+let err=(d-c.dist)/d
+
+if(!p1.lock)
+p1.pos.add(diff.clone().multiplyScalar(.5*err))
+
+if(!p2.lock)
+p2.pos.sub(diff.clone().multiplyScalar(.5*err))
+
+})
+
+}
 
 }
 
 
 
-// update mesh
-
 function updateMesh(){
 
-const pos=geo.attributes.position
+const pos=geometry.attributes.position
 
 let i=0
 
-for(let y=0;y<=segY;y++){
+for(let y=0;y<=SEG_Y;y++){
 
-for(let x=0;x<=segX;x++){
+for(let x=0;x<=SEG_X;x++){
 
-const p=particles[idx(x,y)]
+let p=particles[index(x,y)]
 
 pos.setXYZ(i,p.pos.x,p.pos.y,p.pos.z)
 
@@ -290,13 +241,11 @@ i++
 
 pos.needsUpdate=true
 
-geo.computeVertexNormals()
+geometry.computeVertexNormals()
 
 }
 
 
-
-// animation loop
 
 function animate(){
 
@@ -310,9 +259,84 @@ renderer.render(scene,camera)
 
 }
 
-animate()
 
 
+function resize(){
+
+camera.aspect=window.innerWidth/window.innerHeight
+
+camera.updateProjectionMatrix()
+
+renderer.setSize(window.innerWidth,window.innerHeight)
+
+}
+
+
+
+// mouse interaction
+
+let ray=new THREE.Raycaster()
+let mouse=new THREE.Vector2()
+let grabbed=null
+
+function initMouse(){
+
+window.addEventListener("mousedown",e=>{
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+let hit=ray.intersectObject(receiptMesh)
+
+if(hit.length){
+
+let min=1e9
+
+particles.forEach(p=>{
+
+let d=p.pos.distanceTo(hit[0].point)
+
+if(d<min){
+
+min=d
+grabbed=p
+
+}
+
+})
+
+}
+
+})
+
+
+
+window.addEventListener("mouseup",()=>grabbed=null)
+
+
+
+window.addEventListener("mousemove",e=>{
+
+if(!grabbed)return
+
+mouse.x=e.clientX/window.innerWidth*2-1
+mouse.y=-(e.clientY/window.innerHeight)*2+1
+
+ray.setFromCamera(mouse,camera)
+
+let plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
+
+let pos=new THREE.Vector3()
+
+ray.ray.intersectPlane(plane,pos)
+
+grabbed.pos.copy(pos)
+
+})
+
+}
 
 </script>
 
