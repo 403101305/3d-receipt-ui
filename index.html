@@ -3,306 +3,266 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3D Receipt UI</title>
+<title>3D 电子小票</title>
 
 <style>
-
 body{
-margin:0;
-overflow:hidden;
-background: linear-gradient(135deg, #fdfbfb 0%, #f0f4f8 100%);
-font-family:monospace;
+  margin:0;
+  overflow:hidden;
+  background: linear-gradient(135deg, #f7f8fa 0%, #eef2f5 100%);
+  font-family: system-ui, monospace;
 }
-
 #title{
-position:fixed;
-top:20px;
-left:20px;
-color:#555;
-font-size:14px;
+  position:fixed;
+  top:20px;
+  left:20px;
+  color:#666;
+  font-size:14px;
 }
-
 canvas{
-display:block;
+  display:block;
 }
-
 </style>
 </head>
 
 <body>
-
-<div id="title">
-3D Receipt • drag / touch
-</div>
+<div id="title">3D 电子小票 · 点击拖拽轻轻晃动</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-
 <script>
 
-let scene,camera,renderer
-let receipt,geometry
+let scene, camera, renderer;
+let receipt, geometry;
 
-const SEGX=20
-const SEGY=70
+const SEGX = 12;
+const SEGY = 40;
 
-let particles=[]
-let constraints=[]
+let particles = [];
+let constraints = [];
 
-init()
-animate()
+init();
+animate();
 
-function init(){
+function init() {
+  scene = new THREE.Scene();
 
-scene=new THREE.Scene()
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 3.2);
 
-camera=new THREE.PerspectiveCamera(
-45,
-window.innerWidth/window.innerHeight,
-0.1,
-100
-)
+  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0xeef2f5, 1);
+  document.body.appendChild(renderer.domElement);
 
-camera.position.set(0,0,3)
+  // 更柔和的光照，纸张更有质感
+  const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+  scene.add(ambient);
 
-renderer=new THREE.WebGLRenderer({
-antialias:true,
-alpha:true
-})
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(2, 4, 3);
+  scene.add(light);
 
-renderer.setSize(window.innerWidth,window.innerHeight)
-renderer.setClearColor(0xf0f4f8, 1);
-document.body.appendChild(renderer.domElement)
+  // 小票画布
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 1024;
+  const ctx = canvas.getContext("2d");
 
-// lighting
-scene.add(new THREE.AmbientLight(0xffffff,.8))
+  // 纸张底色偏暖，更像真实小票
+  ctx.fillStyle = "#fffaf0";
+  ctx.fillRect(0, 0, 512, 1024);
 
-let light=new THREE.DirectionalLight(0xffffff,1)
-light.position.set(3,5,3)
-scene.add(light)
+  ctx.fillStyle = "#222";
+  ctx.font = "28px monospace";
 
-let fillLight = new THREE.DirectionalLight(0xffffff,0.4)
-fillLight.position.set(-3,2,2)
-scene.add(fillLight)
+  // 中文真实小票
+  const lines = [
+    "  便利超市",
+    "  --------------------",
+    "  2026年04月03日 16:30",
+    "",
+    "  矿泉水 ×2        4.00",
+    "  面包 ×1          5.50",
+    "  火腿肠 ×3        9.00",
+    "  纸巾 ×1          3.50",
+    "  咖啡 ×1         12.00",
+    "",
+    "  --------------------",
+    "  合计:          34.00",
+    "  实收:          34.00",
+    "",
+    "  欢迎再次光临！"
+  ];
 
-// receipt texture
-let canvas=document.createElement("canvas")
-canvas.width=512
-canvas.height=1024
+  lines.forEach((txt, i) => {
+    ctx.fillText(txt, 40, 80 + i * 46);
+  });
 
-let ctx=canvas.getContext("2d")
+  const texture = new THREE.CanvasTexture(canvas);
 
-ctx.fillStyle="#ffffff"
-ctx.fillRect(0,0,512,1024)
+  geometry = new THREE.PlaneGeometry(1.1, 2.2, SEGX, SEGY);
 
-ctx.fillStyle="#222"
-ctx.font="26px monospace"
+  // 纸张材质更厚实
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    side: THREE.DoubleSide,
+    roughness: 0.9,
+    metalness: 0
+  });
 
-// 真实小票内容
-let lines=[
-"",
-"  SHOPPING MART",
-"  -------------------",
-"  2026/04/03 15:22",
-"",
-"  Snacks............$5.90",
-"  Cola..............$3.50",
-"  Bread.............$2.80",
-"  Milk..............$4.20",
-"  Egg 10pcs.........$6.10",
-"  Tissue............$1.99",
-"",
-"  SUBTOTAL.........$24.49",
-"  TAX(5%)...........$1.22",
-"  -------------------",
-"  TOTAL............$25.71",
-"",
-"  Thank you!"
-]
+  receipt = new THREE.Mesh(geometry, material);
+  scene.add(receipt);
 
-lines.forEach((t,i)=>{
-ctx.fillText(t,40,80+i*42)
-})
-
-let texture=new THREE.CanvasTexture(canvas)
-
-// geometry
-geometry=new THREE.PlaneGeometry(
-1,
-2,
-SEGX,
-SEGY
-)
-
-let material=new THREE.MeshStandardMaterial({
-map:texture,
-side:THREE.DoubleSide,
-roughness:0.8,
-metalness:0.1
-})
-
-receipt=new THREE.Mesh(geometry,material)
-scene.add(receipt)
-
-initParticles()
-initConstraints()
-initInteraction()
-
-window.addEventListener("resize",resize)
+  initParticles();
+  initConstraints();
+  initInteraction();
+  window.addEventListener("resize", resize);
 }
 
-function idx(x,y){
-return x+(SEGX+1)*y
+function idx(x, y) {
+  return x + (SEGX + 1) * y;
 }
 
-function initParticles(){
-for(let y=0;y<=SEGY;y++){
-for(let x=0;x<=SEGX;x++){
-let px=(x/SEGX-.5)
-let py=1-y/SEGY*2
-particles.push({
-pos:new THREE.Vector3(px,py,0),
-prev:new THREE.Vector3(px,py,0),
-lock:y===0
-})
-}
-}
-}
-
-function connect(a,b){
-let d=particles[a].pos.distanceTo(particles[b].pos)
-constraints.push({a,b,d})
+// 顶部固定，保持垂直
+function initParticles() {
+  for (let y = 0; y <= SEGY; y++) {
+    for (let x = 0; x <= SEGX; x++) {
+      const px = (x / SEGX - 0.5);
+      const py = 1 - y / SEGY * 2;
+      particles.push({
+        pos: new THREE.Vector3(px, py, 0),
+        prev: new THREE.Vector3(px, py, 0),
+        lock: y === 0 // 顶部锁住
+      });
+    }
+  }
 }
 
-function initConstraints(){
-for(let y=0;y<=SEGY;y++){
-for(let x=0;x<=SEGX;x++){
-if(x<SEGX)connect(idx(x,y),idx(x+1,y))
-if(y<SEGY)connect(idx(x,y),idx(x,y+1))
-}
-}
+function connect(a, b) {
+  const d = particles[a].pos.distanceTo(particles[b].pos);
+  constraints.push({ a, b, d });
 }
 
-function simulate(){
-particles.forEach(p=>{
-if(p.lock)return
-let vel=p.pos.clone().sub(p.prev)
-p.prev.copy(p.pos)
-p.pos.add(vel)
-
-// 轻微自然飘动，不翻转
-p.pos.z += Math.sin(Date.now()*0.0015+p.pos.y*3)*0.0006
-})
-
-for(let i=0;i<4;i++){
-constraints.forEach(c=>{
-let p1=particles[c.a]
-let p2=particles[c.b]
-let diff=new THREE.Vector3().subVectors(p2.pos,p1.pos)
-let dist=diff.length()
-let err=(dist-c.d)/dist
-if(!p1.lock)
-p1.pos.add(diff.clone().multiplyScalar(.5*err))
-if(!p2.lock)
-p2.pos.sub(diff.clone().multiplyScalar(.5*err))
-})
-}
+function initConstraints() {
+  for (let y = 0; y <= SEGY; y++) {
+    for (let x = 0; x <= SEGX; x++) {
+      if (x < SEGX) connect(idx(x, y), idx(x + 1, y));
+      if (y < SEGY) connect(idx(x, y), idx(x, y + 1));
+    }
+  }
 }
 
-function updateMesh(){
-let pos=geometry.attributes.position
-let i=0
-for(let y=0;y<=SEGY;y++){
-for(let x=0;x<=SEGX;x++){
-let p=particles[idx(x,y)]
+// 极轻微自然晃动
+function simulate() {
+  particles.forEach(p => {
+    if (p.lock) return;
+    const vel = p.pos.clone().sub(p.prev);
+    p.prev.copy(p.pos);
+    p.pos.add(vel);
+    // 超小幅晃动
+    p.pos.z += Math.sin(Date.now() * 0.0012 + p.pos.y * 2) * 0.0004;
+  });
 
-// 限制Z轴范围，防止翻转
-p.pos.z = Math.max(-0.2, Math.min(0.2, p.pos.z))
-
-pos.setXYZ(i,p.pos.x,p.pos.y,p.pos.z)
-i++
-}
-}
-pos.needsUpdate=true
-geometry.computeVertexNormals()
-}
-
-function animate(){
-requestAnimationFrame(animate)
-simulate()
-updateMesh()
-renderer.render(scene,camera)
-}
-
-function resize(){
-camera.aspect=window.innerWidth/window.innerHeight
-camera.updateProjectionMatrix()
-renderer.setSize(window.innerWidth,window.innerHeight)
+  for (let i = 0; i < 3; i++) {
+    constraints.forEach(c => {
+      const p1 = particles[c.a];
+      const p2 = particles[c.b];
+      const diff = p2.pos.clone().sub(p1.pos);
+      const dist = diff.length();
+      const err = (dist - c.d) / dist * 0.5;
+      if (!p1.lock) p1.pos.add(diff.multiplyScalar(err));
+      if (!p2.lock) p2.pos.sub(diff.multiplyScalar(err));
+    });
+  }
 }
 
-// interaction
-let ray=new THREE.Raycaster()
-let mouse=new THREE.Vector2()
-let grab=null
-
-function startInteraction(x,y){
-mouse.x=x/window.innerWidth*2-1
-mouse.y=-(y/window.innerHeight)*2+1
-ray.setFromCamera(mouse,camera)
-let hit=ray.intersectObject(receipt)
-if(hit.length){
-let min=1e9
-particles.forEach(p=>{
-let d=p.pos.distanceTo(hit[0].point)
-if(d<min){
-min=d
-grab=p
-}
-})
-}
+function updateMesh() {
+  const pos = geometry.attributes.position;
+  let i = 0;
+  for (let y = 0; y <= SEGY; y++) {
+    for (let x = 0; x <= SEGX; x++) {
+      const p = particles[idx(x, y)];
+      // 严格限制Z轴，绝不翻转
+      p.pos.z = THREE.MathUtils.clamp(p.pos.z, -0.08, 0.08);
+      pos.setXYZ(i, p.pos.x, p.pos.y, p.pos.z);
+      i++;
+    }
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
 }
 
-function moveInteraction(x,y){
-if(!grab)return
-
-mouse.x=x/window.innerWidth*2-1
-mouse.y=-(y/window.innerHeight)*2+1
-ray.setFromCamera(mouse,camera)
-
-let plane=new THREE.Plane(new THREE.Vector3(0,0,1),0)
-let pos=new THREE.Vector3()
-ray.ray.intersectPlane(plane,pos)
-
-// 限制拖拽幅度，不让小票飞起来
-grab.pos.x = THREE.MathUtils.clamp(pos.x, -0.5, 0.5)
-grab.pos.y = THREE.MathUtils.clamp(pos.y, -1.8, 0.2)
-grab.pos.z = THREE.MathUtils.clamp(pos.z, -0.15, 0.15)
+function animate() {
+  requestAnimationFrame(animate);
+  simulate();
+  updateMesh();
+  renderer.render(scene, camera);
 }
 
-function endInteraction(){
-grab=null
+function resize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function initInteraction(){
-window.addEventListener("mousedown",e=>{
-startInteraction(e.clientX,e.clientY)
-})
-window.addEventListener("mousemove",e=>{
-moveInteraction(e.clientX,e.clientY)
-})
-window.addEventListener("mouseup",endInteraction)
+// 交互：只允许极小幅度晃动
+let ray = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+let grab = null;
 
-window.addEventListener("touchstart",e=>{
-let t=e.touches[0]
-startInteraction(t.clientX,t.clientY)
-})
-window.addEventListener("touchmove",e=>{
-let t=e.touches[0]
-moveInteraction(t.clientX,t.clientY)
-})
-window.addEventListener("touchend",endInteraction)
+function startInteraction(x, y) {
+  mouse.x = (x / window.innerWidth) * 2 - 1;
+  mouse.y = -(y / window.innerHeight) * 2 + 1;
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(receipt);
+  if (hit.length) {
+    let min = 1e9;
+    particles.forEach(p => {
+      const d = p.pos.distanceTo(hit[0].point);
+      if (d < min) {
+        min = d;
+        grab = p;
+      }
+    });
+  }
+}
+
+function moveInteraction(x, y) {
+  if (!grab) return;
+  mouse.x = (x / window.innerWidth) * 2 - 1;
+  mouse.y = -(y / window.innerHeight) * 2 + 1;
+  ray.setFromCamera(mouse, camera);
+
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const pt = new THREE.Vector3();
+  ray.ray.intersectPlane(plane, pt);
+
+  // 超级限制：只动一点点
+  grab.pos.x = THREE.MathUtils.clamp(pt.x, grab.pos.x - 0.06, grab.pos.x + 0.06);
+  grab.pos.y = THREE.MathUtils.clamp(pt.y, grab.pos.y - 0.08, grab.pos.y + 0.08);
+  grab.pos.z = THREE.MathUtils.clamp(pt.z, -0.06, 0.06);
+}
+
+function endInteraction() {
+  grab = null;
+}
+
+function initInteraction() {
+  window.addEventListener("mousedown", e => startInteraction(e.clientX, e.clientY));
+  window.addEventListener("mousemove", e => moveInteraction(e.clientX, e.clientY));
+  window.addEventListener("mouseup", endInteraction);
+
+  window.addEventListener("touchstart", e => {
+    const t = e.touches[0];
+    startInteraction(t.clientX, t.clientY);
+  });
+  window.addEventListener("touchmove", e => {
+    const t = e.touches[0];
+    moveInteraction(t.clientX, t.clientY);
+  });
+  window.addEventListener("touchend", endInteraction);
 }
 
 </script>
-
 </body>
 </html>
