@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>3D Receipt UI</title>
 
 <style>
@@ -9,11 +10,11 @@
 body{
 margin:0;
 overflow:hidden;
-background:#ececec;
+background:#f5f5f5;
 font-family:monospace;
 }
 
-#label{
+#title{
 position:fixed;
 top:20px;
 left:20px;
@@ -30,8 +31,8 @@ display:block;
 
 <body>
 
-<div id="label">
-3D Receipt • Drag with mouse
+<div id="title">
+3D Receipt • drag / touch
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
@@ -42,7 +43,7 @@ let scene,camera,renderer
 let receipt,geometry
 
 const SEGX=20
-const SEGY=60
+const SEGY=70
 
 let particles=[]
 let constraints=[]
@@ -53,6 +54,8 @@ animate()
 function init(){
 
 scene=new THREE.Scene()
+
+
 
 camera=new THREE.PerspectiveCamera(
 45,
@@ -65,9 +68,24 @@ camera.position.set(0,0,3)
 
 
 
-renderer=new THREE.WebGLRenderer({antialias:true})
+renderer=new THREE.WebGLRenderer({
+antialias:true,
+alpha:false
+})
+
 renderer.setSize(window.innerWidth,window.innerHeight)
 document.body.appendChild(renderer.domElement)
+
+
+
+// lighting
+
+scene.add(new THREE.AmbientLight(0xffffff,.7))
+
+let light=new THREE.DirectionalLight(0xffffff,.9)
+light.position.set(3,5,3)
+
+scene.add(light)
 
 
 
@@ -79,13 +97,14 @@ canvas.height=1024
 
 let ctx=canvas.getContext("2d")
 
-ctx.fillStyle="#fffaf0"
+ctx.fillStyle="#fff8e8"
 ctx.fillRect(0,0,512,1024)
 
-ctx.fillStyle="#000"
+ctx.fillStyle="#111"
 ctx.font="24px monospace"
 
 let lines=[
+
 "3D GRAPHICS STORE",
 "",
 "1x Vertex Shader .... $5",
@@ -98,10 +117,13 @@ let lines=[
 "TOTAL .............. $1024",
 "",
 "Thank you developer!"
+
 ]
 
 lines.forEach((t,i)=>{
+
 ctx.fillText(t,40,80+i*40)
+
 })
 
 let texture=new THREE.CanvasTexture(canvas)
@@ -117,6 +139,8 @@ SEGX,
 SEGY
 )
 
+
+
 let material=new THREE.MeshBasicMaterial({
 map:texture,
 side:THREE.DoubleSide
@@ -130,8 +154,7 @@ scene.add(receipt)
 
 initParticles()
 initConstraints()
-
-initMouse()
+initInteraction()
 
 window.addEventListener("resize",resize)
 
@@ -203,6 +226,10 @@ p.prev.copy(p.pos)
 
 p.pos.add(vel)
 
+// subtle natural paper movement
+
+p.pos.z += Math.sin(Date.now()*0.002+p.pos.y*4)*0.001
+
 })
 
 
@@ -220,8 +247,11 @@ let dist=diff.length()
 
 let err=(dist-c.d)/dist
 
-if(!p1.lock)p1.pos.add(diff.clone().multiplyScalar(.5*err))
-if(!p2.lock)p2.pos.sub(diff.clone().multiplyScalar(.5*err))
+if(!p1.lock)
+p1.pos.add(diff.clone().multiplyScalar(.5*err))
+
+if(!p2.lock)
+p2.pos.sub(diff.clone().multiplyScalar(.5*err))
 
 })
 
@@ -262,7 +292,6 @@ function animate(){
 requestAnimationFrame(animate)
 
 simulate()
-
 updateMesh()
 
 renderer.render(scene,camera)
@@ -275,24 +304,25 @@ function resize(){
 
 camera.aspect=window.innerWidth/window.innerHeight
 camera.updateProjectionMatrix()
+
 renderer.setSize(window.innerWidth,window.innerHeight)
 
 }
 
 
 
-// mouse interaction
+// interaction (mouse + touch)
 
 let ray=new THREE.Raycaster()
 let mouse=new THREE.Vector2()
 let grab=null
 
-function initMouse(){
 
-window.addEventListener("mousedown",e=>{
 
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
+function startInteraction(x,y){
+
+mouse.x=x/window.innerWidth*2-1
+mouse.y=-(y/window.innerHeight)*2+1
 
 ray.setFromCamera(mouse,camera)
 
@@ -317,20 +347,16 @@ grab=p
 
 }
 
-})
+}
 
 
 
-window.addEventListener("mouseup",()=>grab=null)
-
-
-
-window.addEventListener("mousemove",e=>{
+function moveInteraction(x,y){
 
 if(!grab)return
 
-mouse.x=e.clientX/window.innerWidth*2-1
-mouse.y=-(e.clientY/window.innerHeight)*2+1
+mouse.x=x/window.innerWidth*2-1
+mouse.y=-(y/window.innerHeight)*2+1
 
 ray.setFromCamera(mouse,camera)
 
@@ -342,7 +368,46 @@ ray.ray.intersectPlane(plane,pos)
 
 grab.pos.copy(pos)
 
+}
+
+
+
+function endInteraction(){
+
+grab=null
+
+}
+
+
+
+function initInteraction(){
+
+// mouse
+
+window.addEventListener("mousedown",e=>{
+startInteraction(e.clientX,e.clientY)
 })
+
+window.addEventListener("mousemove",e=>{
+moveInteraction(e.clientX,e.clientY)
+})
+
+window.addEventListener("mouseup",endInteraction)
+
+
+// touch
+
+window.addEventListener("touchstart",e=>{
+let t=e.touches[0]
+startInteraction(t.clientX,t.clientY)
+})
+
+window.addEventListener("touchmove",e=>{
+let t=e.touches[0]
+moveInteraction(t.clientX,t.clientY)
+})
+
+window.addEventListener("touchend",endInteraction)
 
 }
 
